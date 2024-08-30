@@ -1,7 +1,7 @@
 object ExecListDialog: TExecListDialog
   Left = 353
   Top = 325
-  Caption = 'Execution Master by diversenok'
+  Caption = 'Execution Master by Peter Abbasi'
   ClientHeight = 347
   ClientWidth = 693
   Color = clBtnFace
