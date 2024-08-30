@@ -3,8 +3,11 @@
 # Intercepting Program Startup on Windows and Trying to Not Mess Things Up.
 
 Feb 26, 2021
-
+<div align=center>
+  
 ![Execution Master](https://github.com/pa-0/ExecutionMaster/blob/poa-dev/res/assets/01.ExecutionMaster.png)
+
+<sup>Figure 1: ExecutionMaster</sup></div>
 
 Have you ever heard of Image File Execution Options (**IFEO**)? It is a registry key under `HKEY_LOCAL_MACHINE` that controls things like [Global Flags](https://docs.microsoft.com/en-us/windows-hardware/drivers/debugger/gflags-overview) and [Mitigation Policies](https://docs.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-setprocessmitigationpolicy) on a per-process basis. [One of its features](https://docs.microsoft.com/en-us/previous-versions/visualstudio/visual-studio-2010/a329t4ed%28v=vs.100%29) that drew my attention is a mechanism designed to help developers debug multi-process applications. Imagine a scenario where some program creates a child process that crashes immediately. In case you cannot launch this child manually (that can happen for various reasons), you might have a hard time troubleshooting this problem. With IFEO, however, you can instruct the system to launch your favorite debugger right when it’s about to start this troublesome process. Then you can single-step through the code and figure what goes wrong. Sounds incredibly useful, right?
 
@@ -20,22 +23,26 @@ Those who want to start experimenting right away can find the GitHub repository 
 
 Looking at filesystem and registry activity while creating a new process reveals plenty of peculiarities. Besides filename corrections (which we will discuss a bit later), you can find how querying for IFEO settings works. Let us take a look at a portion of [Process Monitor](https://docs.microsoft.com/en-us/sysinternals/downloads/procmon)’s logs captured while I start **cmd.exe**.
 
+<div align=center>
+
 ![Process Monitor's Log](https://github.com/pa-0/ExecutionMaster/blob/poa-dev/res/assets/02.Procmon-log.png)
 
-_Figure:_ Registry operations performed during process creation.
+<sup>Figure 2: Registry operations performed during process creation.</sup></div>
 
 As you can see, some code (located in kernelbase.dll according to the stack traces) checks various registry keys for existence. I highlighted the most promising entry that is supposed to contain a full path to the debugger and, optionally, its parameters. Therefore, here is an example registration:
 
-```
+```ini
 [HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\TargetProgram.exe]
 "Debugger" = "C:\Debugger.exe"
 ```
 
 Looking at how the process trees compare, we can see where the debugger injects itself into the hierarchy:
 
+<div align=center>
+  
 ![Process tree](https://github.com/pa-0/ExecutionMaster/blob/poa-dev/res/assets/03.Process-tree.png)
 
-_Figure:_ The process hierarchy with and without interception.
+<sup>Figure 3: The process hierarchy with and without interception.</sup></div>
 
 It is worth pointing out the limitations:
 
@@ -51,9 +58,11 @@ Alright, let us take a closer look at the prospects. We can intercept any progra
 
 Being a middleware, we a free to decide whether we want to execute the target, and if so — how. When I first discovered this mechanism, my initial experiment was to write a tool that asks the user for consent whether they want to proceed. After a few minutes of research and programming, I wrote and registered an ultimately simple app with a _Yes/No_ dialog that launches the intercepted executable if the user approves it. The first test spotted how naïve I was. Have you already guessed what happened when I pressed _Yes_? I saw the same dialog again. Repeatedly. Right, I fell into the trap I set up myself. It is going to be a long way.
 
+<div align=center>
+  
 ![Ask Dialog](https://github.com/pa-0/ExecutionMaster/blob/poa-dev/res/assets/04.Ask-dialog.png)
 
-_Figure:_ The confirmation dialog for running a program.
+<sup>Figure 4: The confirmation dialog for running a program.</sup></div>
 
 I am not sure whether this mechanism would make any sense (at least for its original purpose) if it **would not be possible for the debugger to start the target program anyway**. Hence, yes, IFEO does have an exception. I was not entirely correct when I said it does not matter how you launch the application. As we know, Windows API provides several ways to start programs. The most well-known (and the ones we need) are [`ShellExecuteEx`](https://docs.microsoft.com/en-us/windows/desktop/api/shellapi/nf-shellapi-shellexecuteexw) and [`CreateProcess`](https://docs.microsoft.com/en-us/windows/desktop/api/processthreadsapi/nf-processthreadsapi-createprocessw). There are, in fact, more of them, although each one eventually ends up calling `CreateProcess`. The point is: all _documented_ ways to create processes are aware of Image File Execution Options and follow their rules. The exception explicitly made for debuggers is that all programs started via `CreateProcess` with the `DEBUG_PROCESS` flag are not affected. It resolves the issue of entering an infinite loop of debuggers launching themselves but provides an additional argument why nobody should rely on this mechanism as a security measure.
 
@@ -83,7 +92,7 @@ Seems enough? Welcome to the world of pitfalls; we are just getting started.
 
 One of the cunning questions you can try to answer right now is: How does the [User Account Control](https://en.wikipedia.org/wiki/User_Account_Control) react to all of our stunts? As a reminder, it is supposed to display the file’s location and verify its digital signature. What if someone registers an unsigned binary as a debugger for a signed executable? It might seem surprising, but UAC does not care. When you choose to run the target as an Administrator, _its_ name will be in the consent dialog, and _its_ digital signature will determine the visual design. The fact that the system launches a different executable does not change anything. Still, it is not a vulnerability since managing IFEO settings requires administrative-level access. Of course, there is a reasonable explanation for that, which I will reveal later. But in our case, it is perfect: everything looks as it is supposed to from the user’s perspective.
 
-## CreateProcess vs. ShellExecuteEx
+## `CreateProcess` vs. `ShellExecuteEx`
 
 As I already mentioned, these are two primary API endpoints for launching programs. [`CreateProcess`](https://docs.microsoft.com/en-us/windows/desktop/api/processthreadsapi/nf-processthreadsapi-createprocessw) is a lower-level function that provides more granular control over the new process, while [`ShellExecuteEx`](https://docs.microsoft.com/en-us/windows/desktop/api/shellapi/nf-shellapi-shellexecuteexw) is a higher-level shell API that usually calls `CreateProcess` under the hood. They have overlapping functionality, but both provide unique behavior which can be useful under various circumstances. Here I highlighted the differences that are important for our storytelling:
 
@@ -95,7 +104,7 @@ As I already mentioned, these are two primary API endpoints for launching progra
 
 The previous list confirms that using any single one of these functions would not suffice our needs. We must bypass IFEO, but we also want to start programs that run only as an Administrator, even from an unprivileged user. There is, of course, a widely-used solution on how to handle elevation:
 
-```
+```pascal
 if (!CreateProcess(…))
   if (GetLastError() == ERROR_ELEVATION_REQUIRED)
     ShellExecuteEx(…); // using "runas" verb which triggers UAC approval dialog
@@ -103,9 +112,11 @@ if (!CreateProcess(…))
 
 We first try to use `CreateProcess`, and if it does not work, we ask the User Account Control (and, therefore, the interactive user) for help and elevation. So, after getting `ERROR_ELEVATION_REQUIRED`, we are left with no choice but to use `ShellExecuteEx`, which… always launches our debugger and not the target! Fortunately, the second instance will have administrative rights and would not have trouble breaking through IFEO using `CreateProcess`. We just fell into our trap, cloned ourselves, and recovered. Thus, we need to include additional logic to suppress duplicate interaction with the user because we do not want to ask them the same questions twice. How could you ever think of anything like that in advance?!
 
+<div align=center>
+
 ![Elevation chain under IFEO](https://github.com/pa-0/ExecutionMaster/blob/poa-dev/res/assets/05.Elevation.png)
 
-_Figure:_ The process hierarchy during elevation.
+<sup>Figure 5: The process hierarchy during elevation.</sup></div>
 
 ## Where Are All My Parameters?
 
@@ -126,9 +137,11 @@ When someone attempts to start the target, we receive the intended command-line 
 
 I highlighted the filename part in bold; the rest contains the arguments. If none of these files exist, the function fails; otherwise, it uses the first match. As an experiment, you can create a file called `C:\Program.exe` to see if any application on your computer has this bug. Interestingly, Microsoft even made Explorer show a warning if it finds this file on startup.
 
+<div align=center>
+  
 ![Explorer's Warning](https://github.com/pa-0/ExecutionMaster/blob/poa-dev/res/assets/06.Explorer-warning.png)
 
-_Figure:_ Explorer's warning message.
+<sup>Figure 6: Explorer's warning message.</sup></div>
 
 As for our tools, in some cases, we might have no choice but to use `ShellExecuteEx`, which does not include any correction logic and forces us to supply both parts individually. Therefore, we should mimic `CreateProcess`’s behavior and try to guess what other programs want to achieve.
 
@@ -144,9 +157,11 @@ As I said before, User Account Control does not seem to interfere or even notice
 
 Here is how it goes: a program calls to `ShellExecuteEx` specifying the target filename. Under the hood, this function uses COM/RPC to forward its parameters to the **AppInfo** service that handles elevation requests. This service starts **consent.exe**, which, in turn, validates the digital signature of the target file and displays the famous UAC dialog. After the user approves the elevation, **AppInfo** calls `CreateProcessAsUser`, which internally checks for IFEO and swaps the target filename. So there we have it: UAC is clueless about what is happening!
 
+<div align=center>
+  
 ![UAC elevation diagram with IFO](https://github.com/pa-0/ExecutionMaster/blob/poa-dev/res/assets/07.Elevation-detailed.png)
 
-_Figure:_ The detailed view on the elevation process under IFEO.
+<sup>Figure 7: The detailed view on the elevation process under IFEO.</sup></div>
 
 There is also another peculiar topic I want to discuss in this section. Every process stores an identifier of its parent, and some tools use this field to display processes in a tree-like hierarchy. Surprisingly, when it comes to elevation, the caller of `ShellExecuteEx` still appears as a parent, even though **svchost.exe** does all the work on its behalf. How is it possible? Yet, even better, can we achieve the same? When we set up the interception, we instruct the system to inject our debugger into the hierarchy, essentially gaining control over the subtree. It is perfectly normal unless we deal with a multi-process application that depends on correct parent-child relationships. In this case, we should re-parent the new process the same way **AppInfo** does. Luckily for us, this option is documented: all we need is to use [`PROC_THREAD_ATTRIBUTE_PARENT_PROCESS`](https://docs.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-updateprocthreadattribute) and [`STARTUPINFOEX`](https://docs.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-startupinfoexw). We can use this trick to improve compatibility: the target program would not even know what happened.
 
@@ -160,7 +175,7 @@ Here are some funny miscellaneous questions about the topic.
 > **A:** `CreateProcess` checks for IFEO, encounters an entry for _A_ that points to the debugger _B_. It swaps the target filename and restarts processing. Then it checks IFEO for _B_ and discovers _C_. As a result, starting _A_ launches _C_.
 
 > **Q:** Okay, but what if we set a program as a debugger for itself?  
-> **A:** The same logic applies: we restart the processing every time we encounter an IFEO entry for the file we are about to execute. Will the function hang indefinitely because of that? Fortunately, not. The debugger always receives the intended command line as a parameter, so swapping the filename also expands the list of parameters with the former image name. It is equivalent to prepending the command-line with the content of the Debugger field from the registry key. Since the system limits its maximum length by 32,767 characters, the process stops eventually.
+> **A:** The same logic applies: we restart the processing every time we encounter an `IFEO` entry for the file we are about to execute. Will the function hang indefinitely because of that? Fortunately, not. The debugger always receives the intended command line as a parameter, so swapping the filename also expands the list of parameters with the former image name. It is equivalent to prepending the command-line with the content of the Debugger field from the registry key. Since the system limits its maximum length by 32,767 characters, the process stops eventually.
 
 > **Q:** How about specifying a non-executable file as a target? Or even a string that doesn’t represent a valid filename?  
 > **A:** Then, of course, `CreateProcess` fails. The specific error code depends on the provided string and can be both peculiar and misleading. Just imagine a program that collects telemetry about its failed attempts to update itself that fail with “This file is not a Win32 application” on something that certainly is. Can you imagine the amount of troubleshooting it’s going to take to figure out that the client was playing with IFEO and forgot to disable it? Here is a set of errors I managed to get:
@@ -178,4 +193,4 @@ Exploring Image File Execution Options and crafting a tool on top of it turned o
 
 You can find the tool and its sources on GitHub: [**ExecutionMaster**](https://github.com/diversenok/ExecutionMaster)
 
-As a last note, remember that IFEO has a machine-wide scope because it resides in the HKLM hive. Hence, the adjustments you make have an immediate impact on all users, including NT AUTHORITY\SYSTEM, and, therefore, can partially affect the operating system. My tool shows warnings when you try to configure interception for a well-known OS component and also suppresses UI dialogues in the zero session, but keep that in mind.
+As a last note, remember that IFEO has a machine-wide scope because it resides in the HKLM hive. Hence, the adjustments you make have an immediate impact on all users, including `NT AUTHORITY\SYSTEM`, and, therefore, can partially affect the operating system. My tool shows warnings when you try to configure interception for a well-known OS component and also suppresses UI dialogues in the zero session, but keep that in mind.
