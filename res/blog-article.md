@@ -1,12 +1,10 @@
-![diversenok's blog](https://diversenok.github.io/)
-
-[About](https://diversenok.github.io/about/)
+**Source:** [diversenok's blog](https://diversenok.github.io/) | [About](https://diversenok.github.io/about/)
 
 # Intercepting Program Startup on Windows and Trying to Not Mess Things Up.
 
 Feb 26, 2021
 
-![Execution Master](https://diversenok.github.io/images/IFEO/01.ExecutionMaster.png)
+![Execution Master](https://github.com/pa-0/ExecutionMaster/blob/poa-dev/res/assets/01.ExecutionMaster.png)
 
 Have you ever heard of Image File Execution Options (**IFEO**)? It is a registry key under `HKEY_LOCAL_MACHINE` that controls things like [Global Flags](https://docs.microsoft.com/en-us/windows-hardware/drivers/debugger/gflags-overview) and [Mitigation Policies](https://docs.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-setprocessmitigationpolicy) on a per-process basis. [One of its features](https://docs.microsoft.com/en-us/previous-versions/visualstudio/visual-studio-2010/a329t4ed%28v=vs.100%29) that drew my attention is a mechanism designed to help developers debug multi-process applications. Imagine a scenario where some program creates a child process that crashes immediately. In case you cannot launch this child manually (that can happen for various reasons), you might have a hard time troubleshooting this problem. With IFEO, however, you can instruct the system to launch your favorite debugger right when it’s about to start this troublesome process. Then you can single-step through the code and figure what goes wrong. Sounds incredibly useful, right?
 
@@ -22,7 +20,7 @@ Those who want to start experimenting right away can find the GitHub repository 
 
 Looking at filesystem and registry activity while creating a new process reveals plenty of peculiarities. Besides filename corrections (which we will discuss a bit later), you can find how querying for IFEO settings works. Let us take a look at a portion of [Process Monitor](https://docs.microsoft.com/en-us/sysinternals/downloads/procmon)’s logs captured while I start **cmd.exe**.
 
-![Process Monitor's Log](https://diversenok.github.io/images/IFEO/02.Procmon-log.png)
+![Process Monitor's Log](https://github.com/pa-0/ExecutionMaster/blob/poa-dev/res/assets/02.Procmon-log.png)
 
 _Figure:_ Registry operations performed during process creation.
 
@@ -35,7 +33,7 @@ As you can see, some code (located in kernelbase.dll according to the stack trac
 
 Looking at how the process trees compare, we can see where the debugger injects itself into the hierarchy:
 
-![Process tree](https://diversenok.github.io/images/IFEO/03.Process-tree.png)
+![Process tree](https://github.com/pa-0/ExecutionMaster/blob/poa-dev/res/assets/03.Process-tree.png)
 
 _Figure:_ The process hierarchy with and without interception.
 
@@ -53,7 +51,7 @@ Alright, let us take a closer look at the prospects. We can intercept any progra
 
 Being a middleware, we a free to decide whether we want to execute the target, and if so — how. When I first discovered this mechanism, my initial experiment was to write a tool that asks the user for consent whether they want to proceed. After a few minutes of research and programming, I wrote and registered an ultimately simple app with a _Yes/No_ dialog that launches the intercepted executable if the user approves it. The first test spotted how naïve I was. Have you already guessed what happened when I pressed _Yes_? I saw the same dialog again. Repeatedly. Right, I fell into the trap I set up myself. It is going to be a long way.
 
-![Ask Dialog](https://diversenok.github.io/images/IFEO/04.Ask-dialog.png)
+![Ask Dialog](https://github.com/pa-0/ExecutionMaster/blob/poa-dev/res/assets/04.Ask-dialog.png)
 
 _Figure:_ The confirmation dialog for running a program.
 
@@ -105,7 +103,7 @@ if (!CreateProcess(…))
 
 We first try to use `CreateProcess`, and if it does not work, we ask the User Account Control (and, therefore, the interactive user) for help and elevation. So, after getting `ERROR_ELEVATION_REQUIRED`, we are left with no choice but to use `ShellExecuteEx`, which… always launches our debugger and not the target! Fortunately, the second instance will have administrative rights and would not have trouble breaking through IFEO using `CreateProcess`. We just fell into our trap, cloned ourselves, and recovered. Thus, we need to include additional logic to suppress duplicate interaction with the user because we do not want to ask them the same questions twice. How could you ever think of anything like that in advance?!
 
-![Elevation chain under IFEO](https://diversenok.github.io/images/IFEO/05.Elevation.png)
+![Elevation chain under IFEO](https://github.com/pa-0/ExecutionMaster/blob/poa-dev/res/assets/05.Elevation.png)
 
 _Figure:_ The process hierarchy during elevation.
 
@@ -128,7 +126,7 @@ When someone attempts to start the target, we receive the intended command-line 
 
 I highlighted the filename part in bold; the rest contains the arguments. If none of these files exist, the function fails; otherwise, it uses the first match. As an experiment, you can create a file called `C:\Program.exe` to see if any application on your computer has this bug. Interestingly, Microsoft even made Explorer show a warning if it finds this file on startup.
 
-![Explorer's Warning](https://diversenok.github.io/images/IFEO/06.Explorer-warning.png)
+![Explorer's Warning](https://github.com/pa-0/ExecutionMaster/blob/poa-dev/res/assets/06.Explorer-warning.png)
 
 _Figure:_ Explorer's warning message.
 
@@ -146,7 +144,7 @@ As I said before, User Account Control does not seem to interfere or even notice
 
 Here is how it goes: a program calls to `ShellExecuteEx` specifying the target filename. Under the hood, this function uses COM/RPC to forward its parameters to the **AppInfo** service that handles elevation requests. This service starts **consent.exe**, which, in turn, validates the digital signature of the target file and displays the famous UAC dialog. After the user approves the elevation, **AppInfo** calls `CreateProcessAsUser`, which internally checks for IFEO and swaps the target filename. So there we have it: UAC is clueless about what is happening!
 
-![UAC elevation diagram with IFO](https://diversenok.github.io/images/IFEO/07.Elevation-detailed.png)
+![UAC elevation diagram with IFO](https://github.com/pa-0/ExecutionMaster/blob/poa-dev/res/assets/07.Elevation-detailed.png)
 
 _Figure:_ The detailed view on the elevation process under IFEO.
 
