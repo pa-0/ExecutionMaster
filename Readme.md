@@ -12,13 +12,11 @@ run it. You can assign one of the several standard actions for it:
  - Force system **not to sleep** / **display to be on** while the selected program works;
  - **Execute** another program instead of the specified.
 
-<div align=center>
+<div align=center><br>
 
  ![](https://user-images.githubusercontent.com/30962924/46260732-70e53780-c4f2-11e8-908c-d1c55b44aabe.png)
 
-</div>The latest version also contains shell extension:<br>
-
-<div align=center>
+</div>The latest version also contains shell extension:<br><br><div align=center>
 
 ![](https://user-images.githubusercontent.com/30962924/46580600-a3ca8680-ca30-11e8-953d-ddffb3cfe4dc.png)
 
